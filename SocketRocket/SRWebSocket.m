@@ -284,6 +284,11 @@ typedef void (^data_callback)(SRWebSocket *webSocket,  NSData *data);
     
     NSArray *_requestedProtocols;
     SRIOConsumerPool *_consumerPool;
+	
+	BOOL _httpProxyConnected;
+	BOOL _httpProxyFound;
+	NSString *_httpProxyAddress;
+	NSString *_httpProxyPort;
 }
 
 @synthesize delegate = _delegate;
@@ -332,7 +337,20 @@ static __strong NSData *CRLFCRLF;
 
 - (void)_SR_commonInit;
 {
-    
+    NSDictionary *proxyDic = (__bridge_transfer NSDictionary *)CFNetworkCopySystemProxySettings();
+	
+	if (proxyDic) {
+		NSNumber *proxiesHTTPEnable = [proxyDic objectForKey:(__bridge NSString *)kCFNetworkProxiesHTTPEnable];
+		if ([proxiesHTTPEnable boolValue]) {
+			SRFastLog(@"Found http proxy");
+			_httpProxyFound = YES;
+			_httpProxyAddress = [proxyDic objectForKey:(__bridge NSString *)kCFNetworkProxiesHTTPProxy];
+			_httpProxyPort = [[proxyDic objectForKey:(__bridge NSString *)kCFNetworkProxiesHTTPPort] stringValue];
+		} else {
+			SRFastLog(@"No http proxy");
+		}
+	}
+	
     NSString *scheme = _url.scheme.lowercaseString;
     assert([scheme isEqualToString:@"ws"] || [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"wss"] || [scheme isEqualToString:@"https"]);
     
@@ -465,6 +483,29 @@ static __strong NSData *CRLFCRLF;
         return;
 
     }
+	
+	if (_httpProxyFound && !_httpProxyConnected) {
+		if (responseCode == 200) {
+			NSData *message = CFBridgingRelease(CFHTTPMessageCopySerializedMessage(_receivedHTTPHeaders));
+			NSString *stringMessage = [[NSString alloc] initWithData:message encoding:NSUTF8StringEncoding];
+			SRFastLog(@"proxy \n %@", stringMessage);
+			
+			// clear headers in order not to append further headers
+			CFRelease(_receivedHTTPHeaders);
+			_receivedHTTPHeaders = NULL;
+			
+			_httpProxyConnected = YES;
+			
+			if (_secure) {
+				[self _setupSecurityAfterHttpProxy];
+				[self didConnect];
+			} else {
+				[self didConnect];
+			}
+			return;
+		}
+	}
+	
     
     if(![self _checkHandshake:_receivedHTTPHeaders]) {
         [self _failWithError:[NSError errorWithDomain:SRWebSocketErrorDomain code:2133 userInfo:[NSDictionary dictionaryWithObject:[NSString stringWithFormat:@"Invalid Sec-WebSocket-Accept response"] forKey:NSLocalizedDescriptionKey]]];
@@ -514,9 +555,83 @@ static __strong NSData *CRLFCRLF;
     }];
 }
 
+- (void)_connectToProxy
+{
+	int port = 80;
+	
+	if (!_url.port) {
+		
+		NSString *scheme = [_url.scheme lowercaseString];
+		
+		if ([scheme isEqualToString:@"wss"] || [scheme isEqualToString:@"https"]) {
+			port = 443;
+		} else if ([scheme isEqualToString:@"ws"] || [scheme isEqualToString:@"http"]) {
+			port = 80;
+		}
+	} else {
+		port = [_url.port intValue];
+	}
+	
+	NSURL *proxyURL = [NSURL URLWithString:[NSString stringWithFormat:@"%@:%d", _url.host, port]];
+	CFHTTPMessageRef request = CFHTTPMessageCreateRequest(NULL, CFSTR("CONNECT"), (__bridge CFURLRef)proxyURL, kCFHTTPVersion1_1);
+	
+	
+	NSString *host = [NSString stringWithFormat:@"%@:%d", _url.host, port];
+	
+	CFHTTPMessageSetHeaderFieldValue(request, CFSTR("Host"), (__bridge CFStringRef)host);
+	CFHTTPMessageSetHeaderFieldValue(request, CFSTR("Proxy-Connection"), CFSTR("keep-alive"));
+	CFHTTPMessageSetHeaderFieldValue(request, CFSTR("Connection"), CFSTR("keep-alive"));
+	
+	NSData *message = CFBridgingRelease(CFHTTPMessageCopySerializedMessage(request));
+	
+	CFRelease(request);
+	
+	[self _writeData:message];
+    [self _readHTTPHeader];
+}
+
+- (void)_setupSecurity
+{
+	NSMutableDictionary *SSLOptions = [[NSMutableDictionary alloc] init];
+	
+	// If we're using pinned certs, don't validate the certificate chain
+	if ([_urlRequest SR_SSLPinnedCertificates].count) {
+		[SSLOptions setValue:[NSNumber numberWithBool:NO] forKey:(__bridge id)kCFStreamSSLValidatesCertificateChain];
+	}
+	
+	NSString *host = [_url host];
+	[SSLOptions setValue:host forKey:(__bridge id)kCFStreamSSLPeerName];
+	
+#if DEBUG
+	[SSLOptions setValue:[NSNumber numberWithBool:NO] forKey:(__bridge id)kCFStreamSSLValidatesCertificateChain];
+	[SSLOptions setValue:[NSNumber numberWithBool:YES] forKey:(__bridge id)kCFStreamSSLAllowsAnyRoot];
+	[SSLOptions setValue:[NSNumber numberWithBool:YES] forKey:(__bridge id)kCFStreamSSLAllowsExpiredCertificates];
+	[SSLOptions setValue:[NSNumber numberWithBool:YES] forKey:(__bridge id)kCFStreamSSLAllowsExpiredRoots];
+	[SSLOptions setValue:(__bridge id)kCFNull forKey:(__bridge id)kCFStreamSSLPeerName];
+	NSLog(@"SocketRocket: In debug mode. Allowing connection to any cert");
+#endif
+	
+	[SSLOptions setValue:(__bridge id)kCFStreamSocketSecurityLevelNegotiatedSSL forKey:(__bridge id)kCFStreamSSLLevel];
+	[_outputStream setProperty:SSLOptions
+						forKey:(__bridge id)kCFStreamPropertySSLSettings];
+	[_inputStream setProperty:SSLOptions
+					   forKey:(__bridge id)kCFStreamPropertySSLSettings];
+}
+
+- (void)_setupSecurityAfterHttpProxy
+{
+	[self _setupSecurity];
+}
+
 - (void)didConnect
 {
     SRFastLog(@"Connected");
+	
+	if (_httpProxyFound && !_httpProxyConnected) {
+		[self _connectToProxy];
+		return;
+	}
+	
     CFHTTPMessageRef request = CFHTTPMessageCreateRequest(NULL, CFSTR("GET"), (__bridge CFURLRef)_url, kCFHTTPVersion1_1);
     
     // Set host first so it defaults
@@ -561,6 +676,12 @@ static __strong NSData *CRLFCRLF;
         }
     }
     NSString *host = _url.host;
+	
+	// Override socket host and port if http proxy is enabled
+	if (_httpProxyFound) {
+		port = [_httpProxyPort intValue];
+		host = [_httpProxyAddress copy];
+	}
     
     CFReadStreamRef readStream = NULL;
     CFWriteStreamRef writeStream = NULL;
@@ -571,25 +692,10 @@ static __strong NSData *CRLFCRLF;
     _inputStream = CFBridgingRelease(readStream);
     
     
-    if (_secure) {
-        NSMutableDictionary *SSLOptions = [[NSMutableDictionary alloc] init];
-        
-        [_outputStream setProperty:(__bridge id)kCFStreamSocketSecurityLevelNegotiatedSSL forKey:(__bridge id)kCFStreamPropertySocketSecurityLevel];
-        
-        // If we're using pinned certs, don't validate the certificate chain
-        if ([_urlRequest SR_SSLPinnedCertificates].count) {
-            [SSLOptions setValue:[NSNumber numberWithBool:NO] forKey:(__bridge id)kCFStreamSSLValidatesCertificateChain];
-        }
-        
-#if DEBUG
-        [SSLOptions setValue:[NSNumber numberWithBool:NO] forKey:(__bridge id)kCFStreamSSLValidatesCertificateChain];
-        NSLog(@"SocketRocket: In debug mode.  Allowing connection to any root cert");
-#endif
-        
-        [_outputStream setProperty:SSLOptions
-                            forKey:(__bridge id)kCFStreamPropertySSLSettings];
-    }
-    
+    if (_secure && !_httpProxyFound) {
+		[self _setupSecurity];
+	}
+
     _inputStream.delegate = self;
     _outputStream.delegate = self;
 }
