@@ -90,6 +90,7 @@ static NSString *const SRWebSocketAppendToSecKeyString = @"258EAFA5-E914-47DA-95
 static inline int32_t validate_dispatch_data_partial_string(NSData *data);
 static inline dispatch_queue_t log_queue();
 static inline void SRFastLog(NSString *format, ...);
+static inline SSLCipherSuite SRWebSocketNegotiatedCipherSuite(CFReadStreamRef readStream);
 
 @interface NSData (SRWebSocket)
 
@@ -1603,6 +1604,15 @@ static const size_t SRFrameHeaderOverhead = 32;
     });
 }
 
+- (SSLCipherSuite)negotiatedCipherSuite
+{
+	SSLCipherSuite cipherSuite = SSL_NULL_WITH_NULL_NULL;
+	if (self.readyState == SR_OPEN) {
+		cipherSuite = SRWebSocketNegotiatedCipherSuite((__bridge CFReadStreamRef)_inputStream);
+	}
+	return cipherSuite;
+}
+
 @end
 
 
@@ -1740,6 +1750,23 @@ static inline void SRFastLog(NSString *format, ...)  {
     
     NSLog(@"[SR] %@", formattedString);
 #endif
+}
+
+static inline SSLCipherSuite SRWebSocketNegotiatedCipherSuite(CFReadStreamRef readStream)
+{
+	// Small hack to get SSL context of NSStream from http://lists.apple.com/archives/Apple-cdsa/2008/Oct/msg00007.html
+	const extern CFStringRef kCFStreamPropertySocketSSLContext;
+	CFDataRef data = CFReadStreamCopyProperty(readStream, kCFStreamPropertySocketSSLContext);
+	
+	// Extract the SSLContextRef from the CFData
+	SSLContextRef sslContext;
+	CFDataGetBytes(data, CFRangeMake(0, sizeof(SSLContextRef)), (UInt8 *)&sslContext);
+	
+	SSLCipherSuite currentCipher = SSL_NULL_WITH_NULL_NULL;
+	SSLGetNegotiatedCipher(sslContext, &currentCipher);
+	CFRelease(data);
+	
+	return currentCipher;
 }
 
 

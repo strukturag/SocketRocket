@@ -71,6 +71,8 @@ extern NSString *const SRWebSocketErrorDomain;
 // Send a UTF8 String or Data.
 - (void)send:(id)data;
 
+- (SSLCipherSuite)negotiatedCipherSuite; // This method will return negotiated cipher only when readyState is SR_OPEN in all other cases it will return SSL_NULL_WITH_NULL_NULL
+
 @end
 
 #pragma mark - SRWebSocketDelegate
