@@ -285,6 +285,8 @@ typedef void (^data_callback)(SRWebSocket *webSocket,  NSData *data);
     NSArray *_requestedProtocols;
     SRIOConsumerPool *_consumerPool;
 	
+	NSString *_streamNetworkServiceType;
+	
 	BOOL _httpProxyConnected;
 	BOOL _httpProxyFound;
 	NSString *_httpProxyAddress;
@@ -303,7 +305,7 @@ static __strong NSData *CRLFCRLF;
     CRLFCRLF = [[NSData alloc] initWithBytes:"\r\n\r\n" length:4];
 }
 
-- (id)initWithURLRequest:(NSURLRequest *)request protocols:(NSArray *)protocols;
+- (id)initWithURLRequest:(NSURLRequest *)request protocols:(NSArray *)protocols streamNetworkServiceType:(NSString *)networkServiceType;
 {
     self = [super init];
     if (self) {
@@ -312,6 +314,8 @@ static __strong NSData *CRLFCRLF;
         _urlRequest = request;
         
         _requestedProtocols = [protocols copy];
+		
+		_streamNetworkServiceType = [networkServiceType copy];
         
         [self _SR_commonInit];
     }
@@ -321,18 +325,18 @@ static __strong NSData *CRLFCRLF;
 
 - (id)initWithURLRequest:(NSURLRequest *)request;
 {
-    return [self initWithURLRequest:request protocols:nil];
+    return [self initWithURLRequest:request protocols:nil streamNetworkServiceType:nil];
 }
 
 - (id)initWithURL:(NSURL *)url;
 {
-    return [self initWithURL:url protocols:nil];
+    return [self initWithURL:url protocols:nil streamNetworkServiceType:nil];
 }
 
-- (id)initWithURL:(NSURL *)url protocols:(NSArray *)protocols;
+- (id)initWithURL:(NSURL *)url protocols:(NSArray *)protocols streamNetworkServiceType:(NSString *)networkServiceType;
 {
     NSMutableURLRequest *request = [[NSMutableURLRequest alloc] initWithURL:url];    
-    return [self initWithURLRequest:request protocols:protocols];
+    return [self initWithURLRequest:request protocols:protocols streamNetworkServiceType:networkServiceType];
 }
 
 - (void)_SR_commonInit;
@@ -694,6 +698,10 @@ static __strong NSData *CRLFCRLF;
     
     if (_secure && !_httpProxyFound) {
 		[self _setupSecurity];
+	}
+	
+	if (_streamNetworkServiceType) {
+		[_inputStream setProperty:_streamNetworkServiceType forKey:NSStreamNetworkServiceType];
 	}
 
     _inputStream.delegate = self;

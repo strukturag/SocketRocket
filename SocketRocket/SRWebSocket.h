@@ -45,12 +45,12 @@ extern NSString *const SRWebSocketErrorDomain;
 // It will be nil until after the handshake completes.
 @property (nonatomic, readonly, copy) NSString *protocol;
 
-// Protocols should be an array of strings that turn into Sec-WebSocket-Protocol.
-- (id)initWithURLRequest:(NSURLRequest *)request protocols:(NSArray *)protocols;
+// Protocols should be an array of strings that turn into Sec-WebSocket-Protocol. StreamNetworkServiceType should be one of the keys provided in documentation.
+- (id)initWithURLRequest:(NSURLRequest *)request protocols:(NSArray *)protocols streamNetworkServiceType:(NSString *)networkServiceType;
 - (id)initWithURLRequest:(NSURLRequest *)request;
 
 // Some helper constructors.
-- (id)initWithURL:(NSURL *)url protocols:(NSArray *)protocols;
+- (id)initWithURL:(NSURL *)url protocols:(NSArray *)protocols streamNetworkServiceType:(NSString *)networkServiceType;
 - (id)initWithURL:(NSURL *)url;
 
 // Delegate queue will be dispatch_main_queue by default.
