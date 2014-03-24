@@ -1746,14 +1746,16 @@ static inline SSLCipherSuite SRWebSocketNegotiatedCipherSuite(CFReadStreamRef re
 	// Small hack to get SSL context of NSStream from http://lists.apple.com/archives/Apple-cdsa/2008/Oct/msg00007.html
 	const extern CFStringRef kCFStreamPropertySocketSSLContext;
 	CFDataRef data = CFReadStreamCopyProperty(readStream, kCFStreamPropertySocketSSLContext);
-	
-	// Extract the SSLContextRef from the CFData
-	SSLContextRef sslContext;
-	CFDataGetBytes(data, CFRangeMake(0, sizeof(SSLContextRef)), (UInt8 *)&sslContext);
-	
 	SSLCipherSuite currentCipher = SSL_NULL_WITH_NULL_NULL;
-	SSLGetNegotiatedCipher(sslContext, &currentCipher);
-	CFRelease(data);
+	
+	if (data) {
+		// Extract the SSLContextRef from the CFData
+		SSLContextRef sslContext;
+		CFDataGetBytes(data, CFRangeMake(0, sizeof(SSLContextRef)), (UInt8 *)&sslContext);
+			
+		SSLGetNegotiatedCipher(sslContext, &currentCipher);
+		CFRelease(data);
+	}
 	
 	return currentCipher;
 }
